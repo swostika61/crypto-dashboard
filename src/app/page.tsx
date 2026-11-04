@@ -12,60 +12,60 @@ import {
 import type { Coin, Currency } from "@/lib/types";
 
 const REFRESH_SECONDS = 60;
+const DEFAULT_CURRENCY: Currency = "cad";
 
 export default function HomePage() {
   const router = useRouter();
   const [coins, setCoins] = useState<Coin[]>([]);
-  const [currency, setCurrency] = useState<Currency>("cad");
+  const [currency, setCurrency] = useState<Currency>(DEFAULT_CURRENCY);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [staleNote, setStaleNote] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  const load = useCallback(async (cur: Currency, isRefresh: boolean) => {
-    try {
-      const response = await fetch(`/api/coins?currency=${cur}`);
-      if (!response.ok) throw new Error("request failed");
-      const data = (await response.json()) as Coin[];
-      setCoins(data);
-      setLastUpdated(new Date());
-      setError("");
-      setStaleNote("");
-    } catch {
-      // A failed refresh keeps the last good data on screen.
-      // Only a failed first load is a full error.
-      if (isRefresh) {
-        setStaleNote("Could not refresh just now, showing the last prices.");
-      } else {
-        setError(
-          "Prices would not load. The free data source limits calls, wait a moment and try again.",
-        );
+  const loadCoins = useCallback(
+    async (selectedCurrency: Currency, isRefresh: boolean) => {
+      try {
+        const response = await fetch(getCoinsUrl(selectedCurrency));
+        if (!response.ok) throw new Error("request failed");
+        const data = (await response.json()) as Coin[];
+        setCoins(data);
+        setLastUpdated(new Date());
+        setError("");
+        setStaleNote("");
+      } catch {
+        // A failed refresh keeps the last good data on screen.
+        // Only a failed first load is a full error.
+        if (isRefresh) {
+          setStaleNote("Could not refresh just now, showing the last prices.");
+        } else {
+          setError(
+            "Prices would not load. The free data source limits calls, wait a moment and try again.",
+          );
+        }
+      } finally {
+        setLoading(false);
       }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    },
+    [],
+  );
 
   // First load, and again whenever the currency changes.
   useEffect(() => {
-    load(currency, false);
-  }, [currency, load]);
+    loadCoins(currency, false);
+  }, [currency, loadCoins]);
 
   // Live feeling: refresh on its own every minute.
   useEffect(() => {
-    const timer = setInterval(() => load(currency, true), REFRESH_SECONDS * 1000);
-    return () => clearInterval(timer);
-  }, [currency, load]);
-
-  const visible = coins.filter((coin) => {
-    const term = search.trim().toLowerCase();
-    if (!term) return true;
-    return (
-      coin.name.toLowerCase().includes(term) ||
-      coin.symbol.toLowerCase().includes(term)
+    const timer = setInterval(
+      () => loadCoins(currency, true),
+      REFRESH_SECONDS * 1000,
     );
-  });
+    return () => clearInterval(timer);
+  }, [currency, loadCoins]);
+
+  const visible = filterCoins(coins, search);
 
   return (
     <main className="min-h-screen bg-slate-950 px-4 py-8 text-slate-100 sm:px-8">
@@ -97,7 +97,7 @@ export default function HomePage() {
           </p>
           <button
             type="button"
-            onClick={() => load(currency, true)}
+            onClick={() => loadCoins(currency, true)}
             className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:bg-slate-800"
           >
             Refresh now
@@ -120,7 +120,7 @@ export default function HomePage() {
               <p className="text-sm text-rose-300">{error}</p>
               <button
                 type="button"
-                onClick={() => load(currency, false)}
+                onClick={() => loadCoins(currency, false)}
                 className="mt-4 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500"
               >
                 Try again
@@ -218,5 +218,20 @@ export default function HomePage() {
         </footer>
       </div>
     </main>
+  );
+}
+
+function getCoinsUrl(currency: Currency) {
+  return `/api/coins?currency=${currency}`;
+}
+
+function filterCoins(coins: Coin[], search: string) {
+  const searchTerm = search.trim().toLowerCase();
+  if (!searchTerm) return coins;
+
+  return coins.filter(
+    (coin) =>
+      coin.name.toLowerCase().includes(searchTerm) ||
+      coin.symbol.toLowerCase().includes(searchTerm),
   );
 }

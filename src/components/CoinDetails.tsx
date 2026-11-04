@@ -12,15 +12,17 @@ import {
 } from "@/lib/format";
 import type { CoinDetails, Currency } from "@/lib/types";
 
+const DEFAULT_CURRENCY: Currency = "cad";
+
 export default function CoinDetails({ id }: { id: string }) {
-  const [currency, setCurrency] = useState<Currency>("cad");
+  const [currency, setCurrency] = useState<Currency>(DEFAULT_CURRENCY);
   const [details, setDetails] = useState<CoinDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const load = useCallback(async () => {
+  const loadDetails = useCallback(async () => {
     try {
-      const response = await fetch(`/api/coin/${id}?currency=${currency}`);
+      const response = await fetch(getCoinUrl(id, currency));
       if (!response.ok) throw new Error("request failed");
       setDetails((await response.json()) as CoinDetails);
       setError("");
@@ -34,8 +36,14 @@ export default function CoinDetails({ id }: { id: string }) {
   }, [id, currency]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    loadDetails();
+  }, [loadDetails]);
+
+  const coin = details?.coin;
+  const prices = details?.prices ?? [];
+  const priceChange = coin?.price_change_percentage_24h ?? 0;
+  const priceIsDown = priceChange < 0;
+  const stats = coin ? getStats(coin, currency) : [];
 
   return (
     <main className="min-h-screen bg-slate-950 px-4 py-8 text-slate-100 sm:px-8">
@@ -54,12 +62,12 @@ export default function CoinDetails({ id }: { id: string }) {
           <p className="py-16 text-center text-sm text-slate-400">
             Loading coin...
           </p>
-        ) : error || !details ? (
+        ) : error || !coin ? (
           <div className="py-16 text-center">
             <p className="text-sm text-rose-300">{error}</p>
             <button
               type="button"
-              onClick={load}
+              onClick={loadDetails}
               className="mt-4 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500"
             >
               Try again
@@ -71,7 +79,7 @@ export default function CoinDetails({ id }: { id: string }) {
               {/* Coin logo comes from the API, plain img is fine here */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={details.coin.image}
+                src={coin.image}
                 alt=""
                 width={44}
                 height={44}
@@ -79,28 +87,27 @@ export default function CoinDetails({ id }: { id: string }) {
               />
               <div>
                 <h1 className="text-2xl font-bold leading-tight">
-                  {details.coin.name}{" "}
+                  {coin.name}{" "}
                   <span className="text-base font-medium uppercase text-slate-500">
-                    {details.coin.symbol}
+                    {coin.symbol}
                   </span>
                 </h1>
                 <p className="text-sm text-slate-400">
-                  Rank #{details.coin.market_cap_rank}
+                  Rank #{coin.market_cap_rank}
                 </p>
               </div>
               <div className="ml-auto text-right">
                 <p className="text-3xl font-bold">
-                  {formatPrice(details.coin.current_price, currency)}
+                  {formatPrice(coin.current_price, currency)}
                 </p>
                 <p
                   className={`text-sm font-medium ${
-                    details.coin.price_change_percentage_24h < 0
+                    priceIsDown
                       ? "text-rose-400"
                       : "text-emerald-400"
                   }`}
                 >
-                  {details.coin.price_change_percentage_24h < 0 ? "▼" : "▲"}{" "}
-                  {formatPercent(details.coin.price_change_percentage_24h)}{" "}
+                  {priceIsDown ? "▼" : "▲"} {formatPercent(priceChange)}{" "}
                   today
                 </p>
               </div>
@@ -111,45 +118,20 @@ export default function CoinDetails({ id }: { id: string }) {
                 Price, last 7 days
               </h2>
               <div className="mt-3">
-                <PriceChart prices={details.prices} />
+                <PriceChart prices={prices} />
               </div>
               <div className="mt-2 flex justify-between text-xs text-slate-500">
                 <span>
-                  Low {formatPrice(Math.min(...details.prices.map(([, p]) => p)), currency)}
+                  Low {formatPrice(getLowestPrice(prices), currency)}
                 </span>
                 <span>
-                  High {formatPrice(Math.max(...details.prices.map(([, p]) => p)), currency)}
+                  High {formatPrice(getHighestPrice(prices), currency)}
                 </span>
               </div>
             </section>
 
             <section className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-3">
-              {[
-                {
-                  label: "Market cap",
-                  value: formatCompactMoney(details.coin.market_cap, currency),
-                },
-                {
-                  label: "Volume 24h",
-                  value: formatCompactMoney(details.coin.total_volume, currency),
-                },
-                {
-                  label: "24h high",
-                  value: formatPrice(details.coin.high_24h, currency),
-                },
-                {
-                  label: "24h low",
-                  value: formatPrice(details.coin.low_24h, currency),
-                },
-                {
-                  label: "Circulating supply",
-                  value: `${formatSupply(details.coin.circulating_supply)} ${details.coin.symbol.toUpperCase()}`,
-                },
-                {
-                  label: "All time high",
-                  value: `${formatPrice(details.coin.ath, currency)} (${formatPercent(details.coin.ath_change_percentage)})`,
-                },
-              ].map((stat) => (
+              {stats.map((stat) => (
                 <div
                   key={stat.label}
                   className="rounded-2xl bg-slate-900 p-4 ring-1 ring-slate-800"
@@ -171,4 +153,45 @@ export default function CoinDetails({ id }: { id: string }) {
       </div>
     </main>
   );
+}
+
+function getCoinUrl(id: string, currency: Currency) {
+  return `/api/coin/${id}?currency=${currency}`;
+}
+
+function getLowestPrice(prices: [number, number][]) {
+  return Math.min(...prices.map(([, price]) => price));
+}
+
+function getHighestPrice(prices: [number, number][]) {
+  return Math.max(...prices.map(([, price]) => price));
+}
+
+function getStats(coin: CoinDetails["coin"], currency: Currency) {
+  return [
+    {
+      label: "Market cap",
+      value: formatCompactMoney(coin.market_cap, currency),
+    },
+    {
+      label: "Volume 24h",
+      value: formatCompactMoney(coin.total_volume, currency),
+    },
+    {
+      label: "24h high",
+      value: formatPrice(coin.high_24h, currency),
+    },
+    {
+      label: "24h low",
+      value: formatPrice(coin.low_24h, currency),
+    },
+    {
+      label: "Circulating supply",
+      value: `${formatSupply(coin.circulating_supply)} ${coin.symbol.toUpperCase()}`,
+    },
+    {
+      label: "All time high",
+      value: `${formatPrice(coin.ath, currency)} (${formatPercent(coin.ath_change_percentage)})`,
+    },
+  ];
 }

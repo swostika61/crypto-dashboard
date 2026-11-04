@@ -1,39 +1,27 @@
 import type { Coin, CoinDetails, Currency } from "@/lib/types";
 
-// One coin, in full: its stats from the markets endpoint, plus its
-// hourly prices for the last 7 days for the chart. Cached for 60
-// seconds like the list, the free API has a call limit.
-
-const VALID: Currency[] = ["cad", "usd"];
+const DEFAULT_CURRENCY: Currency = "cad";
+const COINGECKO_URL = "https://api.coingecko.com/api/v3/coins";
+const COINGECKO_OPTIONS = {
+  headers: { accept: "application/json" },
+  next: { revalidate: 60 },
+};
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  if (!/^[a-z0-9-]+$/.test(id)) {
+  if (!isValidCoinId(id)) {
     return Response.json({ error: "Unknown coin." }, { status: 400 });
   }
 
-  const { searchParams } = new URL(request.url);
-  const requested = searchParams.get("currency") ?? "cad";
-  const currency: Currency = VALID.includes(requested as Currency)
-    ? (requested as Currency)
-    : "cad";
-
-  const headers = { accept: "application/json" };
-  const cache = { next: { revalidate: 60 } };
+  const currency = getCurrency(request);
 
   try {
     const [marketsResponse, chartResponse] = await Promise.all([
-      fetch(
-        `https://api.coingecko.com/api/v3/coins/markets?vs_currency=${currency}&ids=${id}`,
-        { headers, ...cache },
-      ),
-      fetch(
-        `https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=${currency}&days=7`,
-        { headers, ...cache },
-      ),
+      fetch(buildMarketsUrl(id, currency), COINGECKO_OPTIONS),
+      fetch(buildChartUrl(id, currency), COINGECKO_OPTIONS),
     ]);
 
     if (!marketsResponse.ok || !chartResponse.ok) {
@@ -60,4 +48,27 @@ export async function GET(
       { status: 502 },
     );
   }
+}
+
+function isValidCoinId(id: string) {
+  return /^[a-z0-9-]+$/.test(id);
+}
+
+function getCurrency(request: Request): Currency {
+  const requestedCurrency = new URL(request.url).searchParams.get("currency");
+  return requestedCurrency === "usd" ? "usd" : DEFAULT_CURRENCY;
+}
+
+function buildMarketsUrl(id: string, currency: Currency) {
+  const url = new URL(`${COINGECKO_URL}/markets`);
+  url.searchParams.set("vs_currency", currency);
+  url.searchParams.set("ids", id);
+  return url;
+}
+
+function buildChartUrl(id: string, currency: Currency) {
+  const url = new URL(`${COINGECKO_URL}/${id}/market_chart`);
+  url.searchParams.set("vs_currency", currency);
+  url.searchParams.set("days", "7");
+  return url;
 }
